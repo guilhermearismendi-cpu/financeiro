@@ -12,17 +12,35 @@ st.title("📊 Classificador e Dashboard Financeiro com IA")
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-3.6-flash') 
+    model = genai.GenerativeModel('gemini-2.5-flash') 
 except Exception as e:
     st.error("Erro ao configurar a API. Verifique se a GEMINI_API_KEY está nos secrets.")
     st.stop()
 
-# 3. Interface de Upload
+# 3. Gerenciamento de Categorias Personalizadas no Estado da Sessão
+if 'categorias_permitidas' not in st.session_state:
+    st.session_state['categorias_permitidas'] = [
+        'Alimentação', 'Moradia', 'Transporte', 'Investimentos', 
+        'Lazer', 'Saúde', 'Negócios', 'Manutenção', 'Outros'
+    ]
+
+# Sidebar para gerenciar novas categorias personalizadas
+st.sidebar.header("🏷️ Gerenciar Categorias")
+nova_cat_input = st.sidebar.text_input("Adicionar nova categoria:")
+if st.sidebar.button("Cadastrar Categoria"):
+    if nova_cat_input and nova_cat_input.strip() not in st.session_state['categorias_permitidas']:
+        st.session_state['categorias_permitidas'].append(nova_cat_input.strip())
+        st.sidebar.success(f"Categoria '{nova_cat_input.strip()}' adicionada!")
+        st.rerun()
+
+st.sidebar.write("Categorias ativas atualmente:")
+st.sidebar.write(", ".join(st.session_state['categorias_permitidas']))
+
+# 4. Interface de Upload
 st.write("Faça o upload do seu extrato bancário (formato CSV).")
 arquivo_upload = st.file_uploader("Escolha um arquivo CSV", type=["csv"])
 
 if arquivo_upload is not None:
-    # Lê o arquivo CSV com detecção de separador
     try:
         df = pd.read_csv(arquivo_upload, sep=None, engine='python')
     except Exception:
@@ -31,7 +49,6 @@ if arquivo_upload is not None:
     st.write("### Pré-visualização dos Dados")
     st.dataframe(df.head())
     
-    # Seleção das colunas essenciais
     col1, col2 = st.columns(2)
     with col1:
         coluna_descricao = st.selectbox("Qual coluna contém a DESCRIÇÃO da compra?", df.columns)
@@ -41,15 +58,15 @@ if arquivo_upload is not None:
     if st.button("Processar, Classificar e Gerar Dashboard"):
         with st.spinner("A IA está analisando e categorizando seus gastos..."):
             
-            # Prepara a lista de descrições únicas
             descricoes = df[coluna_descricao].dropna().unique().tolist()
             texto_gastos = "\n".join([str(d) for d in descricoes])
+            lista_str = ", ".join(st.session_state['categorias_permitidas'])
             
             prompt = f"""
             Você é um consultor financeiro especialista. Sua tarefa é categorizar estritamente a seguinte lista de descrições de extrato bancário.
             Retorne APENAS linhas no formato exato: `Descrição Exata;Categoria` (separado por ponto e vírgula, sem markdown adicional, sem bullets).
             
-            Categorias permitidas: Alimentação, Moradia, Transporte, Investimentos, Lazer, Saúde, Negócios, Manutenção, Outros.
+            Categorias permitidas que você pode usar: {lista_str}. Se nenhuma se encaixar perfeitamente, use 'Outros'.
             
             Exemplos de raciocínio lógico que você deve aplicar:
             - Custos com 'Terra Nativa' ou 'Car & Bike Hunter' -> Negócios
@@ -71,29 +88,23 @@ if arquivo_upload is not None:
                         partes = linha.split(';', 1)
                         desc = partes[0].strip()
                         cat = partes[1].strip()
-                        mapa_categorias[desc] = cat
+                        if cat in st.session_state['categorias_permitidas']:
+                            mapa_categorias[desc] = cat
+                        else:
+                            mapa_categorias[desc] = 'Outros'
                 
-                # Mapeia de volta para o DataFrame principal
                 df['Categoria'] = df[coluna_descricao].map(mapa_categorias).fillna('Outros')
                 
-                # Conversão robusta de valores para evitar o erro de valor zerado
                 def limpar_e_converter_valor(val):
                     if pd.isna(val):
                         return 0.0
                     if isinstance(val, (int, float)):
                         return float(val)
-                    
-                    # Remove R$, espaços e símbolos monetários
                     val_str = str(val).replace('R$', '').replace('$', '').strip()
-                    
-                    # Trata formatos brasileiros (ex: 1.234,56) vs americanos (ex: 1234.56)
                     if '.' in val_str and ',' in val_str:
-                        # Assume formato 1.234,56
                         val_str = val_str.replace('.', '').replace(',', '.')
                     elif ',' in val_str and '.' not in val_str:
-                        # Assume formato 1234,56
                         val_str = val_str.replace(',', '.')
-                    
                     try:
                         return float(val_str)
                     except ValueError:
@@ -108,26 +119,22 @@ if arquivo_upload is not None:
             except Exception as e:
                 st.error(f"Erro ao processar com a IA: {e}")
 
-# 4. Renderização do Dashboard e Editor Manual
+# 5. Renderização do Dashboard e Editor Manual
 if 'df_processado' in st.session_state:
     df_proc = st.session_state['df_processado']
     col_val = st.session_state['coluna_valor']
     
     st.markdown("---")
-    st.header("🛠️ Refinamento Manual (Ajuste de 'Outros')")
-    st.write("Abaixo você pode visualizar e editar diretamente as categorias dos lançamentos (especialmente os que caíram em 'Outros'). Qualquer alteração feita na tabela abaixo atualiza o dashboard instantaneamente.")
+    st.header("🛠️ Refinamento Manual e Novas Categorias")
+    st.write("Ajuste as categorias abaixo utilizando as opções disponíveis (incluindo as que você criou na barra lateral).")
     
-    # Tabela interativa para editar categorias manualmente
-    lista_categorias_permitidas = ['Alimentação', 'Moradia', 'Transporte', 'Investimentos', 'Lazer', 'Saúde', 'Negócios', 'Manutenção', 'Outros']
-    
-    # Usando st.data_editor para edição interativa
     df_editado = st.data_editor(
         df_proc,
         column_config={
             "Categoria": st.column_config.SelectboxColumn(
                 "Categoria",
                 help="Selecione a categoria correta",
-                options=lista_categorias_permitidas,
+                options=st.session_state['categorias_permitidas'],
                 required=True
             )
         },
@@ -135,7 +142,6 @@ if 'df_processado' in st.session_state:
         key="editor_categorias"
     )
     
-    # Atualiza o dataframe principal com as edições manuais do usuário
     st.session_state['df_processado'] = df_editado
     
     st.markdown("---")
@@ -162,7 +168,7 @@ if 'df_processado' in st.session_state:
         fig_bar = px.bar(gasto_por_cat, x='Categoria', y=col_val, color='Categoria', color_discrete_sequence=px.colors.qualitative.Bold)
         st.plotly_chart(fig_bar, use_container_width=True)
         
-    # 5. Seção de Inteligência Artificial para Otimização de Custos
+    # 6. Seção de Inteligência Artificial para Otimização de Custos
     st.markdown("---")
     st.header("💡 Insights e Otimização de Custos por IA")
     
@@ -171,7 +177,7 @@ if 'df_processado' in st.session_state:
             resumo_financeiro = df_editado.groupby('Categoria')[col_val].sum().to_string()
             
             prompt_otimizacao = f"""
-            Com base nos seguintes totais agregados por categoria de um extrato bancário (já refinados e corrigidos pelo usuário), atue como um consultor financeiro pessoal de elite. 
+            Com base nos seguintes totais agregados por categoria de um extrato bancário (incluindo categorias personalizadas criadas pelo usuário), atue como um consultor financeiro pessoal de elite. 
             Forneça um plano estratégico, direto e prático de otimização de custos, identificando potenciais ralos de dinheiro e propondo cortes inteligentes:
             
             {resumo_financeiro}
