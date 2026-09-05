@@ -12,7 +12,7 @@ st.title("📊 Classificador e Dashboard Financeiro com IA")
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-3.6-flash') 
+    model = genai.GenerativeModel('gemini-3.5-flash-lite') 
 except Exception as e:
     st.error("Erro ao configurar a API. Verifique se a GEMINI_API_KEY está nos secrets.")
     st.stop()
